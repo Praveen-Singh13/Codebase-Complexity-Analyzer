@@ -1,0 +1,815 @@
+PRODUCT REQUIREMENTS DOCUMENT
+Codebase Complexity Analyzer
+
+with PDF Reporting
+CS50P Final Project  •  Python Static Analysis Tool
+Version 1.0  |  April 2025
+Document Status: APPROVED FOR DEVELOPMENT
+Project Name
+Codebase Complexity Analyzer with PDF Reporting
+Primary Language
+Python 3.10+
+External Library
+fpdf2 (pip-installable)
+Course
+CS50P — Introduction to Programming with Python
+Framework
+CLI Tool + AST Analysis + PDF Generation
+Document Owner
+CS50P Student Developer
+Last Updated
+April 2025
+Review Cycle
+Pre-submission
+§1  
+Project Overview
+The Codebase Complexity Analyzer with PDF Reporting is a self-contained Python command-line application designed to perform static analysis on Python codebases. The tool scans a target directory, parses every Python file using Python’s built-in ast (Abstract Syntax Tree) module, computes a comprehensive set of software quality metrics, identifies potential maintainability risks through a warning detection engine, computes per-file and aggregate complexity scores, and produces structured output both in the terminal and as a professionally formatted multi-page PDF report powered by the fpdf2 library.
+This project is submitted as the CS50P Final Project and is intentionally scoped to exceed the complexity of any individual problem set. It spans multiple interconnected modules, implements a complete data pipeline from raw source files to polished reports, and includes a thorough pytest-based test suite that validates core algorithmic functions.
+Scope Boundaries
+In-Scope: Python file discovery, AST-based parsing, LOC counting, function/class enumeration, nesting depth analysis, per-file complexity scoring, warning detection, terminal report, PDF report, summary aggregation, optional JSON export, configurable thresholds, verbose mode.
+Out-of-Scope: Refactoring suggestions, cross-file dependency analysis, runtime profiling, support for non-Python languages, GUI front-end, cloud deployment.
+§2  
+Problem Statement
+Python is a dynamically typed language that places high cognitive burden on developers attempting to reason about large codebases. Without tooling, developers and reviewers have no fast, automated way to gauge whether a codebase is growing unwieldy — whether functions are becoming too long, nesting is becoming too deep, or individual files are ballooning beyond maintainable size.
+Existing tools such as radon, pylint, and flake8 provide complexity analysis but require additional configuration, produce verbose output that is difficult to share as a document, and have steep learning curves. There is no single lightweight tool that (1) works on a folder of Python files with zero configuration, (2) produces a readable terminal summary, and (3) simultaneously generates a shareable PDF report from one command.
+The Codebase Complexity Analyzer fills this gap: a zero-dependency analysis pipeline (beyond fpdf2) that a developer can run on any Python project directory to receive immediate structured feedback.
+§3  
+Goals and Objectives
+Primary Goals
+Deliver a fully functional Python CLI tool that operates on a target folder of .py files.
+Compute, per-file, a minimum of seven distinct code quality metrics using AST analysis.
+Implement a scoring engine that reduces all metrics into a 0–100 complexity score per file and for the whole codebase.
+Produce a formatted terminal report and a multi-page PDF report from the same analysis run.
+Satisfy all CS50P Final Project compliance requirements explicitly documented in §19.
+Secondary Goals
+Allow advanced users to customize scoring thresholds via CLI flags.
+Support JSON export of raw analysis data for downstream tooling integration.
+Process at least 50 Python files without noticeable performance degradation.
+Achieve a pytest coverage score of at least 90% on the three required testable functions.
+§4  
+User Personas
+Persona 1 — CS50P Student Developer (Primary)
+Background
+A student completing the CS50P final project requirement. Familiar with Python fundamentals, CLI tools, and pytest. Needs to produce a project that exceeds problem-set difficulty and covers external libraries, file I/O, and test coverage.
+Persona 2 — Junior Python Developer
+Background
+A developer joining a team who wants to quickly assess the health of an inherited codebase. Can run a CLI command, needs readable terminal output and a PDF to share with a technical lead during code review.
+Persona 3 — Technical Educator
+Background
+An instructor who wants to evaluate student Python submissions for complexity and style adherence. Can point the tool at a submissions folder and receive a per-file PDF report without manually opening each file.
+§5  
+Functional Requirements
+FR-1  Directory Scanner
+The tool MUST accept a single positional CLI argument specifying the target folder path. It MUST recursively traverse subdirectories to discover all files with the .py extension. It MUST exclude files that cannot be read due to permission errors, logging a warning instead of aborting. It MUST return an ordered list of absolute paths. If the specified folder does not exist or is empty of .py files, the tool MUST exit with a clear error message and a non-zero exit code.
+FR-2  Python File Parser
+For each discovered .py file, the tool MUST attempt to parse the file’s source code using Python’s ast.parse() function. Parsing MUST be wrapped in a try/except block that catches SyntaxError and UnicodeDecodeError exceptions. On a parse failure, the file MUST be marked with a parse_error flag and included in the report with a warning note; the tool MUST NOT crash. The resulting ast.Module tree MUST be passed to the metric calculation layer.
+FR-3  Code Metrics Calculation
+For each successfully parsed file, the following metrics MUST be computed:
+Metric ID
+Metric Name
+Computation Method
+M-01
+Lines of Code (LOC)
+Count non-blank, non-comment lines in raw file
+M-02
+Number of Functions
+Count ast.FunctionDef + ast.AsyncFunctionDef nodes at any depth
+M-03
+Number of Classes
+Count ast.ClassDef nodes
+M-04
+Function Lengths
+For each function node, count body line span (end_lineno − lineno + 1)
+M-05
+Average Function Length
+Mean of all function length values; 0.0 if no functions
+M-06
+Maximum Function Length
+Max of function length values; 0 if no functions
+M-07
+Loop Nesting Depth
+Maximum nesting level of ast.For / ast.While / ast.AsyncFor nodes
+M-08
+Number of Loops
+Total count of all loop nodes across the file
+M-09
+File Size (bytes)
+os.path.getsize() of the file path
+FR-4  Warning Detection System
+The warning engine MUST evaluate each file’s metrics against configurable thresholds and emit named warnings. Default thresholds are specified below. Each warning MUST carry: a severity level (LOW / MEDIUM / HIGH), a human-readable message, and the name of the metric that triggered it.
+Warning ID
+Condition
+Severity
+Default Threshold
+W-01
+max_function_length > threshold
+MEDIUM
+50 lines
+W-02
+loop_nesting_depth > 3
+HIGH
+Depth 3
+W-03
+loc > 500
+MEDIUM
+500 lines
+W-04
+num_functions > 20
+LOW
+20 functions
+W-05
+file_size > 50 KB
+LOW
+51,200 bytes
+W-06
+avg_function_length > 30
+LOW
+30 lines
+FR-5  Complexity Scoring Engine
+The scoring engine MUST produce a per-file score in the range [0, 100] where 0 = perfectly clean and 100 = maximally complex/problematic. The score MUST be computed using the following additive penalty formula:
+score = 0
+# Penalty: long maximum function
+if max_func_len > 50:
+    score += min(30, (max_func_len - 50) * 0.5)
+# Penalty: deep nesting
+if nesting_depth > 3:
+    score += min(25, (nesting_depth - 3) * 8)
+# Penalty: large file
+if loc > 300:
+    score += min(20, (loc - 300) * 0.05)
+# Penalty: excessive functions
+if num_functions > 20:
+    score += min(15, (num_functions - 20) * 1.0)
+# Penalty: high average function length
+if avg_func_len > 30:
+    score += min(10, (avg_func_len - 30) * 0.4)
+score = min(100, round(score, 2))  # clamp to [0, 100]
+The OVERALL complexity score MUST be the unweighted arithmetic mean of all per-file scores. Files with parse errors contribute a fixed penalty score of 75 to the overall average.
+FR-6  Terminal Report Generator
+After completing analysis, the tool MUST print a structured report to stdout. The report MUST include:
+A header banner displaying the tool name, target folder, date/time, and total file count.
+For each file: relative path, all metric values (M-01 through M-09), a list of triggered warnings with severity, and the per-file complexity score rendered as a colored ASCII bar (green ≤ 30, yellow 31–60, red > 60).
+A summary section showing total files analysed, total parse errors, total warnings by severity, average LOC, average function length, and overall complexity score.
+FR-7  PDF Report Generator
+The tool MUST generate a PDF report using the fpdf2 library. The PDF MUST be written to a configurable output path (default: complexity_report.pdf). The PDF structure MUST conform to the layout defined in §12 of this document. The PDF MUST support automatic pagination and MUST not clip or overflow any text content. All section headers, warnings, and metric tables MUST be formatted with visual hierarchy using fonts, sizes, and line separators.
+FR-8  Summary Generator
+The summary aggregator MUST compute across all analysed files:
+Total files scanned
+Total parse errors
+Total functions discovered
+Total classes discovered
+Average LOC per file
+Average function length (across all functions in all files)
+Overall complexity score (mean of per-file scores)
+Distribution of warnings by severity (count of LOW / MEDIUM / HIGH)
+FR-9  Advanced / Optional Features
+Feature
+CLI Flag
+Behaviour
+JSON Export
+--json / -j
+Writes full analysis dict to results.json (configurable via --output-json)
+Configurable Thresholds
+--max-func-len N --max-depth N
+Overrides default warning thresholds at runtime
+Verbose Mode
+--verbose / -v
+Prints AST node counts and raw token data per file to stdout
+Custom PDF Filename
+--output / -o FILENAME
+Sets the PDF output filename; must end in .pdf
+Recursive Toggle
+--no-recurse
+Limits scan to top-level folder only, ignoring subdirectories
+§6  
+Non-Functional Requirements
+Category
+Requirement
+Performance
+Must analyse 50 Python files (each ≤ 1,000 LOC) in under 30 seconds on a standard laptop (2 GHz CPU, 8 GB RAM).
+Memory
+Peak heap usage must not exceed 200 MB during a 50-file run. AST trees must be garbage-collected after per-file processing.
+Reliability
+Must handle 100% of test fixture files without unhandled exceptions. All file I/O must be wrapped in exception handlers.
+Portability
+Must run on Python 3.10+ on macOS, Linux, and Windows without OS-specific code.
+Testability
+Core algorithmic functions must be pure (no side effects) and independently testable without file system mocking.
+Usability
+A new user must be able to run the tool successfully after reading the README in under 5 minutes.
+Maintainability
+Cyclomatic complexity of any function in project.py must itself not exceed 10. PEP 8 compliance required.
+Extensibility
+Scoring weights must be stored in a central SCORING_CONFIG dict to allow future metric additions without refactoring.
+§7  
+System Architecture
+The tool follows a linear pipeline architecture with five distinct layers. Each layer has a single responsibility and communicates with the next via well-typed Python data structures (dicts and lists).
+Architecture Layers
+Layer
+Name
+Primary Module
+Output Type
+L1
+Input / Discovery
+get_python_files()
+list[str] — file paths
+L2
+Parsing
+ast.parse() wrapper
+list[ast.Module | None]
+L3
+Metric Extraction
+count_lines_of_code(), analyze_ast()
+dict[str, Any] per file
+L4
+Scoring & Warnings
+calculate_complexity_score(), detect_warnings()
+dict with score + warnings
+L5
+Reporting
+generate_terminal_report(), generate_pdf_report()
+stdout + PDF file
+Module Responsibilities
+project.py  —  Single-file entry point containing all top-level functions. Handles CLI argument parsing via argparse, orchestrates the pipeline, and exports the public API for tests. No global state except the SCORING_CONFIG constant dict.
+test_project.py  —  pytest test suite importing directly from project. Contains unit tests for get_python_files, count_lines_of_code, and calculate_complexity_score. Uses temporary directories and fixture files to eliminate real file system dependencies during CI.
+sample_code/  —  A curated directory of Python files of varying complexity levels used during development and as test fixtures. Includes at least: clean.py (minimal code), complex.py (deeply nested, many functions), empty.py (zero content), broken.py (intentional syntax error).
+§8  
+Data Flow
+The following describes the complete data transformation pipeline from user invocation to report output:
+User invokes:  python project.py ./my_project --output report.pdf --verbose
+ 1. argparse parses CLI args → Namespace(folder='./my_project', output='report.pdf', verbose=True, ...)
+ 2. get_python_files('./my_project')
+    └─ os.walk() yields dirs/files
+    └─ Filter *.py extensions
+    └─ Returns: ['/abs/path/a.py', '/abs/path/b.py', ...]
+ 3. For each filepath:
+    a) count_lines_of_code(filepath) → int (LOC)
+    b) open(filepath).read() → source_code string
+    c) ast.parse(source_code) → ast.Module tree  [or None on SyntaxError]
+    d) analyze_ast(tree) → {num_functions, num_classes, func_lengths,
+                              avg_func_len, max_func_len, nesting_depth, num_loops}
+    e) detect_warnings(metrics) → [{id, message, severity}, ...]
+    f) calculate_complexity_score(metrics) → float in [0, 100]
+    g) Merge all into file_result dict
+ 4. summarize_results(all_file_results) → summary dict
+ 5. generate_terminal_report(all_file_results, summary) → stdout
+ 6. generate_pdf_report(all_file_results, summary, output_path) → .pdf file
+ 7. If --json flag: json.dump(all_file_results) → results.json
+§9  
+File Structure
+The following directory structure MUST be present at project root. Files marked [REQUIRED] are mandatory for CS50P compliance. All other files are part of the complete deliverable.
+project/
+├── project.py            [REQUIRED] — Main entry point; all top-level functions
+├── test_project.py       [REQUIRED] — pytest test suite
+├── requirements.txt      [REQUIRED] — pip dependencies
+├── README.md             [REQUIRED] — Project documentation
+└── sample_code/          [REQUIRED] — Test fixture Python files
+    ├── clean.py              — Simple, low-complexity example
+    ├── complex.py            — High nesting, many functions
+    ├── empty.py              — Zero-content file (edge case)
+    └── broken.py             — Intentional SyntaxError (error handling)
+File Details
+project.py
+The sole Python source file at the project root. MUST contain: (1) main() as the CLI entry point called under if __name__ == '__main__', (2) at minimum three additional top-level module-level functions beyond main(), (3) no class-based architecture (all logic via functions), (4) argparse configuration for all CLI flags, (5) the SCORING_CONFIG dict constant, and (6) full inline docstrings for every public function.
+test_project.py
+Contains all pytest test functions. MUST import project functions directly. MUST NOT use unittest.TestCase style. Each test function MUST be named test_{function_name}_{scenario} to satisfy the test_function_name naming convention. Must contain at minimum: test_get_python_files (with at least 3 scenarios), test_count_lines_of_code (with at least 4 scenarios), and test_calculate_complexity_score (with at least 4 scenarios).
+requirements.txt
+Contains exactly the following entries. No version pinning required but recommended:
+fpdf2>=2.7.4
+pytest>=7.0.0
+README.md
+A comprehensive markdown file targeting 500–700 words. MUST include: Project Title, Video Demo URL (placeholder for submission), Description paragraph, Features list, File Breakdown table, Design Decisions narrative, and Future Improvements section. Full README specification is defined in §14.
+§10  
+Function Specifications
+This section defines the complete contract for every top-level function in project.py. All functions must be implemented exactly as specified to satisfy CS50P compliance and test coverage requirements.
+main()
+def main() -> None
+Purpose
+Primary CLI entry point. Orchestrates the full pipeline: parses CLI arguments, invokes the discovery layer, drives the per-file analysis loop, aggregates results, and dispatches terminal and PDF report generation. Exits with code 0 on success, code 1 on fatal errors (missing folder, empty scan result).
+Inputs
+  •  No direct function arguments. Reads sys.argv via argparse.
+  •  CLI args: folder (positional str), --output/-o (str, default: 'complexity_report.pdf'), --verbose/-v (bool flag), --json/-j (bool flag), --max-func-len (int, default: 50), --max-depth (int, default: 3), --no-recurse (bool flag).
+Outputs
+  •  Returns None. Side effects: writes to stdout, writes PDF file, optionally writes JSON file.
+Error Handling
+  •  If folder arg is missing: argparse prints usage and exits (code 2).
+  •  If folder does not exist: print 'Error: folder not found' and sys.exit(1).
+  •  If no .py files found: print 'Error: no Python files found in <folder>' and sys.exit(1).
+  •  Any unhandled exception in the analysis loop: caught, logged, and the file is marked with a parse_error flag.
+get_python_files(folder)
+def get_python_files(folder: str, recursive: bool = True) -> list[str]
+Purpose
+Recursively (or non-recursively) walks the given folder and returns a sorted list of absolute paths to all files ending in .py. This function is pure relative to the file system: it does not parse or open files.
+Inputs
+  •  folder (str): Absolute or relative path to the target directory.
+  •  recursive (bool): If True, os.walk() is used for full recursion. If False, os.listdir() is used for top-level-only discovery. Default: True.
+Outputs
+  •  list[str]: Sorted list of absolute .py file paths. Empty list if folder contains no .py files.
+Error Handling
+  •  If folder does not exist: raises FileNotFoundError (caller must handle).
+  •  If a subdirectory raises PermissionError during os.walk(): that subtree is skipped; warning is printed.
+  •  Returns [] for an existing but empty folder — does not raise.
+Notes
+  •  Uses os.path.abspath() to normalise all returned paths.
+  •  Sorting is lexicographic to ensure deterministic output across OS platforms.
+count_lines_of_code(filepath)
+def count_lines_of_code(filepath: str) -> int
+Purpose
+Opens the file at filepath and counts the number of non-blank, non-comment lines. A blank line is defined as a line containing only whitespace. A comment line is defined as a line whose first non-whitespace character is #. Inline comments (code followed by #) count as code lines.
+Inputs
+  •  filepath (str): Absolute path to a Python source file.
+Outputs
+  •  int: Count of qualifying (non-blank, non-comment) lines. Returns 0 for a completely empty or comment-only file.
+Error Handling
+  •  FileNotFoundError: raised if path does not exist; caller handles.
+  •  UnicodeDecodeError: catches and falls back to latin-1 encoding on second read attempt.
+  •  PermissionError: propagates to caller for top-level handling.
+Notes
+  •  Opens file with encoding='utf-8', errors='replace' for robustness.
+  •  This function is intentionally kept pure (no AST dependency) to separate metric concerns.
+analyze_ast(tree)
+def analyze_ast(tree: ast.Module) -> dict
+Purpose
+Performs a complete walk of the AST tree using ast.walk() and ast.NodeVisitor patterns to extract structural metrics. Returns a dictionary of all computed AST-based metrics.
+Inputs
+  •  tree (ast.Module): A parsed AST tree returned by ast.parse(). Must not be None.
+Outputs
+  •  dict with keys: num_functions (int), num_classes (int), func_lengths (list[int]), avg_func_len (float), max_func_len (int), nesting_depth (int), num_loops (int).
+Error Handling
+  •  If tree is None or not an ast.AST instance: returns a zero-value dict with all metrics set to 0 or [].
+  •  If a node lacks lineno/end_lineno (rare in malformed AST): that function is counted but its length recorded as 0.
+Notes
+  •  Nesting depth is computed via a recursive descent that tracks depth counter through For/While/AsyncFor nodes.
+  •  AsyncFunctionDef nodes are counted alongside FunctionDef for num_functions.
+detect_warnings(metrics)
+def detect_warnings(metrics: dict, thresholds: dict | None = None) -> list[dict]
+Purpose
+Evaluates the provided metrics dictionary against the warning thresholds (default or overridden) and returns a list of warning objects. Each warning is a dict with keys: id, message, severity.
+Inputs
+  •  metrics (dict): Output from analyze_ast() merged with count_lines_of_code() and file_size.
+  •  thresholds (dict | None): Optional override dict. If None, uses the module-level DEFAULT_THRESHOLDS constant.
+Outputs
+  •  list[dict]: Each element has keys id (str, e.g. 'W-01'), message (str), severity (str: 'LOW'/'MEDIUM'/'HIGH'). Returns [] if no warnings are triggered.
+Error Handling
+  •  If metrics dict is missing an expected key: that warning check is skipped and a LOW-severity warning 'Missing metric: <key>' is appended.
+  •  If thresholds contains non-numeric values: raises ValueError with descriptive message.
+calculate_complexity_score(metrics)
+def calculate_complexity_score(metrics: dict) -> float
+Purpose
+Applies the additive penalty formula defined in FR-5 to produce a per-file complexity score in the range [0.0, 100.0]. This is a pure function with no I/O side effects.
+Inputs
+  •  metrics (dict): Merged file metrics dict containing: max_func_len, nesting_depth, loc, num_functions, avg_func_len.
+Outputs
+  •  float: Score in [0.0, 100.0], rounded to 2 decimal places.
+Error Handling
+  •  If any metric key is missing: that penalty term is skipped (treated as 0).
+  •  If all metrics are 0 or below threshold: returns 0.0 (no penalties apply).
+  •  Score is always clamped to max 100.0 regardless of extreme input values.
+Notes
+  •  This function must be deterministic: same input always produces same output.
+  •  Penalty weights are read from the SCORING_CONFIG module-level dict, enabling future recalibration.
+generate_terminal_report(results, summary)
+def generate_terminal_report(results: list[dict], summary: dict) -> None
+Purpose
+Formats and prints a complete analysis report to stdout. Uses ANSI escape codes for coloured severity indicators and score bars. Outputs per-file sections followed by an aggregate summary.
+Inputs
+  •  results (list[dict]): List of per-file result dicts, each containing: filepath, loc, num_functions, num_classes, func_lengths, avg_func_len, max_func_len, nesting_depth, num_loops, file_size, warnings, score.
+  •  summary (dict): Aggregate statistics produced by summarize_results().
+Outputs
+  •  Returns None. Side effects: writes formatted text to sys.stdout.
+Error Handling
+  •  If results is empty: prints 'No files analysed.' and returns immediately.
+  •  If a result dict is missing a key: prints '[N/A]' for that metric rather than raising.
+  •  ANSI codes are disabled automatically when stdout is not a TTY (e.g. pipe to file).
+generate_pdf_report(results, summary, output_path)
+def generate_pdf_report(results: list[dict], summary: dict, output_path: str) -> None
+Purpose
+Constructs a multi-page PDF document using fpdf2 and writes it to output_path. The PDF structure conforms exactly to the layout defined in §12 of this PRD: Title Page, Analysis Section (per-file), Warnings Section, and Summary Section.
+Inputs
+  •  results (list[dict]): Same structure as generate_terminal_report() input.
+  •  summary (dict): Aggregate statistics dict.
+  •  output_path (str): Target file path for the PDF. Must end in .pdf.
+Outputs
+  •  Returns None. Side effects: writes binary PDF data to output_path.
+Error Handling
+  •  If output_path directory does not exist: raises FileNotFoundError before creating any FPDF object.
+  •  If output_path does not end in .pdf: raises ValueError('Output path must end in .pdf').
+  •  If fpdf2 raises an internal error during cell rendering: wraps in RuntimeError with original message.
+  •  On success, prints 'PDF saved to <output_path>' to stdout.
+Notes
+  •  Uses FPDF.add_page() with automatic pagination; never hard-codes page breaks.
+  •  Sets PDF metadata: title, author, creator fields using FPDF object attributes.
+summarize_results(results)
+def summarize_results(results: list[dict]) -> dict
+Purpose
+Aggregates a list of per-file result dicts into a single summary dictionary. Pure function with no I/O side effects.
+Inputs
+  •  results (list[dict]): Complete list of per-file result dicts. May be empty.
+Outputs
+  •  dict with keys: total_files (int), parse_errors (int), total_functions (int), total_classes (int), avg_loc (float), avg_func_len (float), overall_score (float), warnings_by_severity (dict: LOW/MEDIUM/HIGH → int).
+Error Handling
+  •  If results is empty: returns a zero-value summary dict with overall_score = 0.0.
+  •  Files with parse_error flag contribute loc=0, functions=0, and score=75.0 to the aggregation.
+§11  
+Testing Strategy
+All tests MUST be implemented using pytest. Test functions MUST be named test_{function_name} or test_{function_name}_{scenario}. The test file MUST be named test_project.py and located at the project root. The following test cases are the minimum required implementation.
+11.1  Tests for get_python_files()
+Test Function Name
+Scenario
+Expected Behaviour
+test_get_python_files_basic
+Folder with 3 .py files
+Returns list of length 3 with correct .py paths
+test_get_python_files_empty
+Folder with no .py files
+Returns empty list []
+test_get_python_files_recursive
+Nested subdirectory with .py files
+Returns all .py files from all subdirectories
+test_get_python_files_nonexistent
+Path to non-existent folder
+Raises FileNotFoundError
+test_get_python_files_no_recurse
+Nested folder, recursive=False
+Returns only top-level .py files
+Implementation Pattern for get_python_files Tests
+import pytest, tempfile, os
+from project import get_python_files
+def test_get_python_files_basic():
+    with tempfile.TemporaryDirectory() as tmp:
+        for name in ['a.py', 'b.py', 'c.py']:
+            open(os.path.join(tmp, name), 'w').close()
+        result = get_python_files(tmp)
+        assert len(result) == 3
+        assert all(f.endswith('.py') for f in result)
+def test_get_python_files_empty():
+    with tempfile.TemporaryDirectory() as tmp:
+        assert get_python_files(tmp) == []
+def test_get_python_files_nonexistent():
+    with pytest.raises(FileNotFoundError):
+        get_python_files('/this/path/does/not/exist')
+11.2  Tests for count_lines_of_code()
+Test Function Name
+Scenario
+Expected Behaviour
+test_count_lines_of_code_basic
+File with 5 code lines, 2 blank
+Returns 5
+test_count_lines_of_code_empty
+Completely empty file
+Returns 0
+test_count_lines_of_code_comments_only
+File with only # comments
+Returns 0
+test_count_lines_of_code_inline_comment
+Line: 'x = 1  # comment'
+Returns 1 (counts as code)
+test_count_lines_of_code_mixed
+10 lines: 3 blank, 2 comments, 5 code
+Returns 5
+import tempfile, os
+from project import count_lines_of_code
+def test_count_lines_of_code_basic():
+    src = 'x = 1\ny = 2\n\nz = 3\na = 4\nb = 5\n'
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(src); path = f.name
+    assert count_lines_of_code(path) == 5
+    os.unlink(path)
+def test_count_lines_of_code_comments_only():
+    src = '# comment 1\n# comment 2\n'
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+        f.write(src); path = f.name
+    assert count_lines_of_code(path) == 0
+    os.unlink(path)
+11.3  Tests for calculate_complexity_score()
+Test Function Name
+Scenario
+Expected Behaviour
+test_calculate_complexity_score_zero
+All metrics at 0
+Returns 0.0
+test_calculate_complexity_score_long_func
+max_func_len=100
+Score > 0 due to function penalty
+test_calculate_complexity_score_deep_nesting
+nesting_depth=6
+Score >= 24 from nesting penalty
+test_calculate_complexity_score_clamp
+Extreme values on all dimensions
+Score == 100.0 (clamped)
+test_calculate_complexity_score_partial
+Only loc=600, rest zero
+Score > 0 from LOC penalty only
+from project import calculate_complexity_score
+def test_calculate_complexity_score_zero():
+    metrics = {'max_func_len': 0, 'nesting_depth': 0,
+               'loc': 0, 'num_functions': 0, 'avg_func_len': 0.0}
+    assert calculate_complexity_score(metrics) == 0.0
+def test_calculate_complexity_score_clamp():
+    metrics = {'max_func_len': 9999, 'nesting_depth': 999,
+               'loc': 9999, 'num_functions': 999, 'avg_func_len': 999.0}
+    assert calculate_complexity_score(metrics) == 100.0
+def test_calculate_complexity_score_deep_nesting():
+    metrics = {'max_func_len': 0, 'nesting_depth': 6,
+               'loc': 0, 'num_functions': 0, 'avg_func_len': 0.0}
+    score = calculate_complexity_score(metrics)
+    # Penalty: (6-3)*8 = 24
+    assert score == 24.0
+§12  
+PDF Generation — Layout Specification
+The PDF generated by generate_pdf_report() MUST conform to this layout specification. The fpdf2 FPDF class MUST be used directly (not the deprecated FPDF1 API). The document MUST use A4 page size, portrait orientation, and 15mm margins on all sides.
+12.1  Title Page (Page 1)
+Element
+Specification
+Document Title
+Font: Helvetica Bold 24pt; centred; 60mm from top
+Subtitle
+'Python Codebase Analysis Report'; Helvetica 14pt; centred
+Separator Line
+Horizontal rule at y=100mm, full page width
+Username Label
+'Analysed by: <username>'; Helvetica 12pt; left-aligned at x=15mm
+Date Label
+'Generated: <date>'; Helvetica 12pt; left-aligned
+Target Folder
+'Target: <folder_path>'; Helvetica 12pt; left-aligned
+File Count
+'Files Found: <N>'; Helvetica Bold 12pt; left-aligned
+Overall Score
+'Overall Complexity Score: <score>/100'; Helvetica Bold 16pt; centred; coloured (green/amber/red)
+12.2  Analysis Section (Pages 2+)
+For each Python file, a sub-section block is rendered. Each block begins with a shaded header bar (RGB 44, 62, 80) containing the filename in white Helvetica Bold 11pt. Below the header, a two-column metrics table renders all M-01 through M-09 values. Warnings for the file are listed below the table with coloured severity prefixes: [LOW] in grey, [MEDIUM] in orange, [HIGH] in red.
+If a file block would overflow the current page, fpdf2’s cell() add_page() is triggered automatically via the FPDF auto_page_break mechanism. auto_page_break MUST be set to True with a 15mm bottom margin.
+12.3  Warnings Section
+A dedicated page section titled 'Warning Summary' lists all warnings across all files, grouped by file. Each warning entry shows: filename (bold), warning ID, severity badge (coloured rectangle drawn with rect()), and message text. This section begins on a new page if the preceding content would push it past the midpoint of the current page.
+12.4  Summary Section (Final Page)
+The last section of the PDF renders the aggregate summary. A table with two columns (Metric | Value) presents: Total Files, Parse Errors, Total Functions, Total Classes, Average LOC, Average Function Length, Overall Complexity Score. Below the table, a horizontal bar chart drawn using fpdf2’s rect() and set_fill_color() methods visualises the score distribution per file (each file = one bar, height proportional to score / 100).
+12.5  PDF Font and Style Requirements
+Font Family
+Helvetica (built-in fpdf2 core font; no external font files required)
+Section Headers
+Helvetica Bold 13pt, white text on navy background
+Body Text
+Helvetica 10pt, black on white
+Metric Values
+Helvetica Bold 10pt
+Warning Text
+Helvetica 9pt with severity-coloured prefix
+Page Numbers
+Footer: 'Page N of M'; Helvetica 8pt; right-aligned; generated in footer() override
+Line Spacing
+Minimum 5mm between logical sections; 3mm between table rows
+§13  
+Error Handling
+Error Condition
+Detection Point
+Behaviour
+Folder path does not exist
+main() after argparse
+Print descriptive error; sys.exit(1)
+Folder is empty (no .py files)
+main() after get_python_files()
+Print 'No Python files found'; sys.exit(1)
+File SyntaxError on parse
+Per-file loop in main()
+Mark file with parse_error=True; append W-00 warning; continue loop
+File UnicodeDecodeError
+count_lines_of_code() + open()
+Retry with latin-1 encoding; if still fails, record loc=0
+PermissionError on file read
+Per-file loop in main()
+Print warning; skip file; do not include in results
+PDF output path invalid
+generate_pdf_report()
+Raise FileNotFoundError before creating FPDF object
+fpdf2 not installed
+Import at module top
+ImportError propagates with message 'Install fpdf2: pip install fpdf2'
+Corrupted AST tree
+analyze_ast()
+Return zero-value metrics dict; do not raise
+§14  
+README.md Specification
+The README.md file is a mandatory deliverable. It must be written in GitHub-flavoured Markdown and target 500–700 words of prose (excluding code blocks). The following sections MUST be present in the order listed:
+Required Sections
+Section Heading
+Content Requirement
+Approx. Word Count
+# Codebase Complexity Analyzer
+H1 title matching project name exactly
+—
+## Video Demo
+URL placeholder: <YOUR_VIDEO_URL>
+—
+## Description
+2–3 paragraph narrative explaining what the tool does, why it was built, and what problem it solves
+150–200 words
+## Features
+Bulleted list of all major features (at least 7 bullets)
+80–120 words
+## Installation
+pip install steps, Python version requirement, usage example with argparse flags
+80–100 words
+## File Breakdown
+Markdown table: Filename | Purpose | Key Functions
+80–100 words
+## Design Decisions
+Narrative on: why AST vs regex, why fpdf2, why single-file project.py, scoring formula rationale
+120–160 words
+## Future Improvements
+3–5 concrete future features with brief explanation
+60–80 words
+§15  
+Performance Requirements
+Requirement ID
+Metric
+Target
+PERF-01
+Analysis throughput
+50 files (≤ 1,000 LOC each) in < 30 seconds
+PERF-02
+Peak memory usage
+< 200 MB for 50-file run
+PERF-03
+PDF generation time
+< 10 seconds for 50-file report
+PERF-04
+Startup time
+< 1 second for --help invocation
+PERF-05
+AST tree lifetime
+Tree discarded after per-file analysis; not retained in global state
+Performance can be validated manually using the sample_code/ directory expanded to 50+ files. No automated performance benchmark is required for CS50P submission, but the developer should observe reasonable runtimes during development.
+§16  
+Security Considerations
+As a local static analysis CLI tool, the attack surface is minimal. The following considerations apply:
+The tool reads source files from disk but NEVER executes them. ast.parse() performs syntactic parsing only — no eval(), exec(), or import of user code is performed at any point.
+The tool does not make network requests. No data is transmitted externally.
+File path inputs are sanitised via os.path.abspath() and os.path.realpath() to prevent path traversal exploits in the folder argument.
+PDF output is written to the path specified by the user; the tool validates the extension (.pdf) but does not restrict the directory. Users should be aware of where the output is written.
+The tool does not store or log source code content to disk (beyond the PDF report which contains only metrics and warnings, not source code).
+§17  
+Deployment and Execution
+Prerequisites
+Python 3.10 or higher
+pip (standard with CPython)
+No virtual environment required, though recommended
+Installation Steps
+# 1. Clone or download the project
+git clone https://github.com/<username>/cs50p-final-project.git
+cd cs50p-final-project
+# 2. Install dependencies
+pip install -r requirements.txt
+# 3. Verify installation
+python project.py --help
+Example Invocations
+# Basic analysis of a folder
+python project.py ./my_project
+# Custom PDF output filename
+python project.py ./my_project --output my_report.pdf
+# Enable verbose mode + JSON export
+python project.py ./my_project --verbose --json
+# Override function length threshold to 30 lines
+python project.py ./my_project --max-func-len 30
+# Scan only top-level directory (no recursion)
+python project.py ./my_project --no-recurse
+# Run test suite
+pytest test_project.py -v
+§18  
+Future Enhancements
+Enhancement ID
+Feature
+Description
+FUT-01
+Cyclomatic Complexity
+Compute McCabe cyclomatic complexity per function via branch-counting AST walk
+FUT-02
+Trend Analysis
+Compare current scan results against a baseline JSON to show improvement/regression over time
+FUT-03
+HTML Report
+Offer an --html flag to generate an interactive browser report with sortable tables and charts
+FUT-04
+Multi-Language Support
+Extend the scanner to support JavaScript (.js) files using a pluggable parser architecture
+FUT-05
+GitHub Actions Integration
+Publish a pre-built GitHub Actions workflow that runs the tool on every PR and posts results as a comment
+FUT-06
+Configuration File
+Support a .complexityrc YAML/TOML config file for project-wide threshold overrides without CLI flags
+FUT-07
+Duplicate Function Detection
+Detect structurally similar function bodies across files as a code duplication risk indicator
+§19  
+Development Milestones
+Milestone
+Deliverable
+Key Functions
+Estimated Effort
+M1 — Foundation
+project.py scaffold, argparse, get_python_files()
+get_python_files
+2–3 hours
+M2 — Parser
+AST parsing pipeline, count_lines_of_code()
+count_lines_of_code, analyze_ast
+3–4 hours
+M3 — Scoring
+Warning engine, scoring engine
+detect_warnings, calculate_complexity_score
+3–4 hours
+M4 — Terminal Report
+generate_terminal_report(), summarize_results()
+generate_terminal_report, summarize_results
+2–3 hours
+M5 — PDF Report
+generate_pdf_report() with fpdf2
+generate_pdf_report
+4–6 hours
+M6 — Tests
+test_project.py with all required test cases
+All test functions
+2–3 hours
+M7 — Polish
+README.md, sample_code/, requirements.txt
+Documentation
+2–3 hours
+M8 — Review
+End-to-end testing, CS50P compliance audit
+All functions
+1–2 hours
+§20  
+Risk Analysis
+Risk ID
+Description
+Likelihood
+Mitigation
+R-01
+fpdf2 API changes between versions
+LOW
+Pin fpdf2>=2.7.4 in requirements.txt; test on exact version
+R-02
+AST node structure differences between Python versions
+LOW
+Target Python 3.10+ only; document version requirement clearly
+R-03
+Large binary .py files (e.g. auto-generated) causing memory spikes
+MEDIUM
+Cap file size at 5 MB; skip and warn for oversized files
+R-04
+Circular imports in sample_code/ causing parse confusion
+LOW
+Tool parses files individually; no import resolution performed
+R-05
+Test isolation: tests modifying temp files not cleaned up
+MEDIUM
+Use tempfile.TemporaryDirectory() as context manager for auto-cleanup
+R-06
+PDF output path conflicts (file already exists)
+LOW
+Overwrite silently; document behaviour in README
+R-07
+Nesting depth algorithm exponential on deeply nested code
+LOW
+Limit nesting traversal depth to 50 levels maximum
+§21  
+CS50P Final Project Compliance Matrix
+This section provides a direct, one-to-one mapping between each mandatory CS50P requirement and the corresponding implementation specification in this PRD.
+CS50P Requirement
+Implementation
+PRD Section
+Written in Python
+project.py and test_project.py are pure Python 3.10+
+§9
+File named project.py at root
+project.py is the sole entry point at project root
+§9
+main() function in project.py
+main() defined at module level; called under if __name__=='__main__'
+§10
+3+ additional top-level functions
+8 additional functions: get_python_files, count_lines_of_code, analyze_ast, detect_warnings, calculate_complexity_score, generate_terminal_report, generate_pdf_report, summarize_results
+§10
+3+ custom functions tested with pytest
+Tests for: get_python_files, count_lines_of_code, calculate_complexity_score in test_project.py
+§11
+test_project.py exists
+test_project.py defined at project root; imported directly by pytest
+§9
+Test function naming: test_function_name
+All tests named test_get_python_files_*, test_count_lines_of_code_*, test_calculate_complexity_score_*
+§11
+requirements.txt exists
+requirements.txt lists fpdf2 and pytest
+§9
+README.md exists
+README.md defined with 8 required sections, 500-700 words
+§14
+Significantly more effort than problem set
+Multi-layer pipeline: file discovery + AST analysis + 9 metrics + warning engine + scoring + terminal report + PDF report + JSON export
+§3, §5
+External libraries pip-installable
+fpdf2 installed via pip install -r requirements.txt; no custom C extensions or system dependencies
+§9, §17
+END OF DOCUMENT  •  Codebase Complexity Analyzer PRD  •  Version 1.0  •  April 2025
