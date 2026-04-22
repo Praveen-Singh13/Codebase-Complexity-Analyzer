@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import os
+import sys
 from typing import Any
 
 
@@ -96,7 +98,29 @@ def main() -> None:
         action="store_true",
         help="Disable recursive directory scanning",
     )
-    parser.parse_args()
+    args = parser.parse_args()
+
+    if not os.path.isdir(args.folder):
+        print("Error: folder not found")
+        sys.exit(1)
+
+    runtime_thresholds = DEFAULT_THRESHOLDS.copy()
+    runtime_thresholds["max_func_len"] = args.max_func_len
+    runtime_thresholds["max_depth"] = args.max_depth
+
+    try:
+        python_files = get_python_files(args.folder, recursive=not args.no_recurse)
+    except FileNotFoundError:
+        print("Error: folder not found")
+        sys.exit(1)
+    except NotImplementedError:
+        # Discovery implementation is completed in a later phase.
+        _ = runtime_thresholds
+        return
+
+    if not python_files:
+        print(f"Error: no Python files found in {args.folder}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
