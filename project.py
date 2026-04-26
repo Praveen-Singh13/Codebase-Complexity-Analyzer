@@ -73,7 +73,64 @@ def count_lines_of_code(filepath: str) -> int:
 
 def analyze_ast(tree: ast.Module) -> dict[str, Any]:
     """Extract AST-based complexity metrics from a parsed module."""
-    raise NotImplementedError("Implemented in later phases.")
+    zero_metrics = {
+        "num_functions": 0,
+        "num_classes": 0,
+        "func_lengths": [],
+        "avg_func_len": 0.0,
+        "max_func_len": 0,
+        "nesting_depth": 0,
+        "num_loops": 0,
+    }
+
+    if tree is None or not isinstance(tree, ast.AST):
+        return zero_metrics
+
+    function_nodes = (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    )
+    class_nodes = (node for node in ast.walk(tree) if isinstance(node, ast.ClassDef))
+    loop_types = (ast.For, ast.While, ast.AsyncFor)
+    loop_nodes = [node for node in ast.walk(tree) if isinstance(node, loop_types)]
+
+    func_lengths: list[int] = []
+    for node in function_nodes:
+        lineno = getattr(node, "lineno", None)
+        end_lineno = getattr(node, "end_lineno", None)
+        if lineno is None or end_lineno is None:
+            func_lengths.append(0)
+            continue
+        func_lengths.append(max(0, end_lineno - lineno + 1))
+
+    def _max_loop_nesting_depth(node: ast.AST, current_depth: int = 0) -> int:
+        is_loop = isinstance(node, loop_types)
+        depth = current_depth + 1 if is_loop else current_depth
+        max_depth = depth
+
+        for child in ast.iter_child_nodes(node):
+            child_depth = _max_loop_nesting_depth(child, depth)
+            if child_depth > max_depth:
+                max_depth = child_depth
+        return max_depth
+
+    num_functions = len(func_lengths)
+    num_classes = sum(1 for _ in class_nodes)
+    avg_func_len = round(sum(func_lengths) / num_functions, 2) if num_functions else 0.0
+    max_func_len = max(func_lengths) if func_lengths else 0
+    nesting_depth = _max_loop_nesting_depth(tree, 0)
+    num_loops = len(loop_nodes)
+
+    return {
+        "num_functions": num_functions,
+        "num_classes": num_classes,
+        "func_lengths": func_lengths,
+        "avg_func_len": avg_func_len,
+        "max_func_len": max_func_len,
+        "nesting_depth": nesting_depth,
+        "num_loops": num_loops,
+    }
 
 
 def detect_warnings(
