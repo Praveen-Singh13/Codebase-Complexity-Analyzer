@@ -137,12 +137,74 @@ def detect_warnings(
     metrics: dict[str, Any], thresholds: dict[str, Any] | None = None
 ) -> list[dict[str, Any]]:
     """Generate warning objects based on computed metrics."""
-    raise NotImplementedError("Implemented in later phases.")
+    active_thresholds = DEFAULT_THRESHOLDS if thresholds is None else thresholds
+
+    for name, value in active_thresholds.items():
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"Threshold '{name}' must be numeric.")
+
+    warning_rules = [
+        ("W-01", "max_func_len", "MEDIUM", active_thresholds["max_func_len"], "Maximum function length exceeded threshold."),
+        ("W-02", "nesting_depth", "HIGH", active_thresholds["max_depth"], "Loop nesting depth exceeded threshold."),
+        ("W-03", "loc", "MEDIUM", active_thresholds["loc"], "Lines of code exceeded threshold."),
+        ("W-04", "num_functions", "LOW", active_thresholds["num_functions"], "Number of functions exceeded threshold."),
+        ("W-05", "file_size", "LOW", active_thresholds["file_size"], "File size exceeded threshold."),
+        ("W-06", "avg_func_len", "LOW", active_thresholds["avg_func_len"], "Average function length exceeded threshold."),
+    ]
+
+    warnings: list[dict[str, Any]] = []
+    for warning_id, metric_name, severity, threshold_value, message in warning_rules:
+        if metric_name not in metrics:
+            warnings.append(
+                {
+                    "id": "W-MISSING",
+                    "message": f"Missing metric: {metric_name}",
+                    "severity": "LOW",
+                    "metric": metric_name,
+                }
+            )
+            continue
+
+        metric_value = metrics[metric_name]
+        if isinstance(metric_value, (int, float)) and metric_value > threshold_value:
+            warnings.append(
+                {
+                    "id": warning_id,
+                    "message": message,
+                    "severity": severity,
+                    "metric": metric_name,
+                }
+            )
+
+    return warnings
 
 
 def calculate_complexity_score(metrics: dict[str, Any]) -> float:
     """Compute a complexity score in the range [0, 100]."""
-    raise NotImplementedError("Implemented in later phases.")
+    max_func_len = metrics.get("max_func_len", 0)
+    nesting_depth = metrics.get("nesting_depth", 0)
+    loc = metrics.get("loc", 0)
+    num_functions = metrics.get("num_functions", 0)
+    avg_func_len = metrics.get("avg_func_len", 0)
+
+    score = 0.0
+
+    if max_func_len > 50:
+        score += min(30, (max_func_len - 50) * 0.5)
+
+    if nesting_depth > 3:
+        score += min(25, (nesting_depth - 3) * 8)
+
+    if loc > 300:
+        score += min(20, (loc - 300) * 0.05)
+
+    if num_functions > 20:
+        score += min(15, (num_functions - 20) * 1.0)
+
+    if avg_func_len > 30:
+        score += min(10, (avg_func_len - 30) * 0.4)
+
+    return float(min(100, round(score, 2)))
 
 
 def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
