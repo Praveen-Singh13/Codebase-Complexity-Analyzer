@@ -28,12 +28,47 @@ DEFAULT_THRESHOLDS: dict[str, int] = {
 
 def get_python_files(folder: str, recursive: bool = True) -> list[str]:
     """Return Python file paths from a folder."""
-    raise NotImplementedError("Implemented in later phases.")
+    if not os.path.isdir(folder):
+        raise FileNotFoundError(f"Folder not found: {folder}")
+
+    python_files: list[str] = []
+
+    if recursive:
+        def _handle_walk_error(error: OSError) -> None:
+            if isinstance(error, PermissionError):
+                print(f"Warning: skipping unreadable directory: {error.filename}")
+
+        for root, _, files in os.walk(folder, onerror=_handle_walk_error):
+            for filename in files:
+                if filename.endswith(".py"):
+                    python_files.append(os.path.abspath(os.path.join(root, filename)))
+    else:
+        for filename in os.listdir(folder):
+            if filename.endswith(".py"):
+                python_files.append(os.path.abspath(os.path.join(folder, filename)))
+
+    return sorted(python_files)
 
 
 def count_lines_of_code(filepath: str) -> int:
     """Count non-blank, non-comment lines in a file."""
-    raise NotImplementedError("Implemented in later phases.")
+    def _count_from_lines(lines: list[str]) -> int:
+        loc = 0
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if line.lstrip().startswith("#"):
+                continue
+            loc += 1
+        return loc
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as source_file:
+            return _count_from_lines(source_file.readlines())
+    except UnicodeDecodeError:
+        with open(filepath, "r", encoding="latin-1") as source_file:
+            return _count_from_lines(source_file.readlines())
 
 
 def analyze_ast(tree: ast.Module) -> dict[str, Any]:
@@ -107,16 +142,13 @@ def main() -> None:
     runtime_thresholds = DEFAULT_THRESHOLDS.copy()
     runtime_thresholds["max_func_len"] = args.max_func_len
     runtime_thresholds["max_depth"] = args.max_depth
+    _ = runtime_thresholds
 
     try:
         python_files = get_python_files(args.folder, recursive=not args.no_recurse)
     except FileNotFoundError:
         print("Error: folder not found")
         sys.exit(1)
-    except NotImplementedError:
-        # Discovery implementation is completed in a later phase.
-        _ = runtime_thresholds
-        return
 
     if not python_files:
         print(f"Error: no Python files found in {args.folder}")
