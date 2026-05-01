@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+from datetime import datetime
 import os
 import sys
 from typing import Any
@@ -275,7 +276,87 @@ def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 def generate_terminal_report(results: list[dict[str, Any]], summary: dict[str, Any]) -> None:
     """Print a terminal-formatted analysis report."""
-    raise NotImplementedError("Implemented in later phases.")
+    if not results:
+        print("No files analysed.")
+        return
+
+    use_ansi = sys.stdout.isatty()
+    colors = {
+        "RESET": "\033[0m" if use_ansi else "",
+        "GREEN": "\033[32m" if use_ansi else "",
+        "YELLOW": "\033[33m" if use_ansi else "",
+        "RED": "\033[31m" if use_ansi else "",
+        "GRAY": "\033[90m" if use_ansi else "",
+    }
+
+    def _fmt_warning_severity(severity: str) -> str:
+        if severity == "HIGH":
+            return f"{colors['RED']}{severity}{colors['RESET']}"
+        if severity == "MEDIUM":
+            return f"{colors['YELLOW']}{severity}{colors['RESET']}"
+        return f"{colors['GRAY']}{severity}{colors['RESET']}"
+
+    def _score_bar(score: float, width: int = 20) -> str:
+        clamped = max(0.0, min(100.0, score))
+        filled = int(round((clamped / 100.0) * width))
+        bar = f"[{'#' * filled}{'-' * (width - filled)}]"
+        if score <= 30:
+            color = colors["GREEN"]
+        elif score <= 60:
+            color = colors["YELLOW"]
+        else:
+            color = colors["RED"]
+        return f"{color}{bar}{colors['RESET']}"
+
+    target_folder = summary.get("target_folder", "[N/A]")
+    now_text = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print("=" * 72)
+    print("Codebase Complexity Analyzer")
+    print(f"Target Folder: {target_folder}")
+    print(f"Generated At : {now_text}")
+    print(f"Total Files  : {len(results)}")
+    print("=" * 72)
+
+    for result in results:
+        filepath = result.get("filepath", "[N/A]")
+        print(f"\nFile: {filepath}")
+        print("-" * 72)
+        print(f"M-01 LOC                 : {result.get('loc', '[N/A]')}")
+        print(f"M-02 Number of Functions : {result.get('num_functions', '[N/A]')}")
+        print(f"M-03 Number of Classes   : {result.get('num_classes', '[N/A]')}")
+        print(f"M-04 Function Lengths    : {result.get('func_lengths', '[N/A]')}")
+        print(f"M-05 Avg Function Length : {result.get('avg_func_len', '[N/A]')}")
+        print(f"M-06 Max Function Length : {result.get('max_func_len', '[N/A]')}")
+        print(f"M-07 Loop Nesting Depth  : {result.get('nesting_depth', '[N/A]')}")
+        print(f"M-08 Number of Loops     : {result.get('num_loops', '[N/A]')}")
+        print(f"M-09 File Size (bytes)   : {result.get('file_size', '[N/A]')}")
+
+        warnings = result.get("warnings", [])
+        print("Warnings:")
+        if isinstance(warnings, list) and warnings:
+            for warning in warnings:
+                warning_id = warning.get("id", "[N/A]")
+                severity = warning.get("severity", "LOW")
+                message = warning.get("message", "[N/A]")
+                print(f"  - [{warning_id}] {_fmt_warning_severity(severity)}: {message}")
+        else:
+            print("  - None")
+
+        score_value = float(result.get("score", 0.0))
+        print(f"Complexity Score: {score_value}/100 {_score_bar(score_value)}")
+
+    warn_summary = summary.get("warnings_by_severity", {})
+    print("\n" + "=" * 72)
+    print("Summary")
+    print("=" * 72)
+    print(f"Total Files Analysed     : {summary.get('total_files', '[N/A]')}")
+    print(f"Total Parse Errors       : {summary.get('parse_errors', '[N/A]')}")
+    print(f"Warnings LOW             : {warn_summary.get('LOW', '[N/A]')}")
+    print(f"Warnings MEDIUM          : {warn_summary.get('MEDIUM', '[N/A]')}")
+    print(f"Warnings HIGH            : {warn_summary.get('HIGH', '[N/A]')}")
+    print(f"Average LOC              : {summary.get('avg_loc', '[N/A]')}")
+    print(f"Average Function Length  : {summary.get('avg_func_len', '[N/A]')}")
+    print(f"Overall Complexity Score : {summary.get('overall_score', '[N/A]')}/100")
 
 
 def generate_pdf_report(
@@ -445,7 +526,8 @@ def main() -> None:
             )
 
     summary = summarize_results(results)
-    _ = summary
+    summary["target_folder"] = os.path.abspath(args.folder)
+    generate_terminal_report(results, summary)
 
 
 if __name__ == "__main__":
