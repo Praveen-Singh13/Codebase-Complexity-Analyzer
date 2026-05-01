@@ -209,7 +209,68 @@ def calculate_complexity_score(metrics: dict[str, Any]) -> float:
 
 def summarize_results(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate per-file results into a summary."""
-    raise NotImplementedError("Implemented in later phases.")
+    if not results:
+        return {
+            "total_files": 0,
+            "parse_errors": 0,
+            "total_functions": 0,
+            "total_classes": 0,
+            "avg_loc": 0.0,
+            "avg_func_len": 0.0,
+            "overall_score": 0.0,
+            "warnings_by_severity": {"LOW": 0, "MEDIUM": 0, "HIGH": 0},
+        }
+
+    total_files = len(results)
+    parse_errors = 0
+    total_functions = 0
+    total_classes = 0
+    total_loc = 0
+    score_values: list[float] = []
+    all_function_lengths: list[int] = []
+    warnings_by_severity = {"LOW": 0, "MEDIUM": 0, "HIGH": 0}
+
+    for result in results:
+        parse_error = bool(result.get("parse_error", False))
+        if parse_error:
+            parse_errors += 1
+            score_values.append(75.0)
+        else:
+            score_values.append(float(result.get("score", 0.0)))
+            total_loc += int(result.get("loc", 0))
+            total_functions += int(result.get("num_functions", 0))
+            total_classes += int(result.get("num_classes", 0))
+            function_lengths = result.get("func_lengths", [])
+            if isinstance(function_lengths, list):
+                all_function_lengths.extend(
+                    length for length in function_lengths if isinstance(length, int)
+                )
+
+        warnings = result.get("warnings", [])
+        if isinstance(warnings, list):
+            for warning in warnings:
+                severity = warning.get("severity")
+                if severity in warnings_by_severity:
+                    warnings_by_severity[severity] += 1
+
+    avg_loc = round(total_loc / total_files, 2) if total_files else 0.0
+    avg_func_len = (
+        round(sum(all_function_lengths) / len(all_function_lengths), 2)
+        if all_function_lengths
+        else 0.0
+    )
+    overall_score = round(sum(score_values) / total_files, 2) if total_files else 0.0
+
+    return {
+        "total_files": total_files,
+        "parse_errors": parse_errors,
+        "total_functions": total_functions,
+        "total_classes": total_classes,
+        "avg_loc": avg_loc,
+        "avg_func_len": avg_func_len,
+        "overall_score": overall_score,
+        "warnings_by_severity": warnings_by_severity,
+    }
 
 
 def generate_terminal_report(results: list[dict[str, Any]], summary: dict[str, Any]) -> None:
@@ -272,6 +333,119 @@ def main() -> None:
     if not python_files:
         print(f"Error: no Python files found in {args.folder}")
         sys.exit(1)
+
+    results: list[dict[str, Any]] = []
+    for filepath in python_files:
+        try:
+            try:
+                loc = count_lines_of_code(filepath)
+            except PermissionError:
+                print(f"Warning: permission denied while reading {filepath}")
+                continue
+            except FileNotFoundError:
+                print(f"Warning: file not found during analysis: {filepath}")
+                continue
+
+            file_size = os.path.getsize(filepath)
+
+            source_code: str
+            try:
+                with open(filepath, "r", encoding="utf-8") as source_file:
+                    source_code = source_file.read()
+            except UnicodeDecodeError:
+                with open(filepath, "r", encoding="latin-1") as source_file:
+                    source_code = source_file.read()
+
+            parse_error = False
+            parse_error_message = ""
+            try:
+                tree = ast.parse(source_code)
+            except (SyntaxError, UnicodeDecodeError) as error:
+                tree = None
+                parse_error = True
+                parse_error_message = str(error)
+
+            if parse_error:
+                ast_metrics = analyze_ast(tree)
+                warnings = [
+                    {
+                        "id": "W-00",
+                        "message": f"Parse error: {parse_error_message}",
+                        "severity": "HIGH",
+                        "metric": "parse_error",
+                    }
+                ]
+                results.append(
+                    {
+                        "filepath": filepath,
+                        "loc": 0,
+                        "num_functions": ast_metrics["num_functions"],
+                        "num_classes": ast_metrics["num_classes"],
+                        "func_lengths": ast_metrics["func_lengths"],
+                        "avg_func_len": ast_metrics["avg_func_len"],
+                        "max_func_len": ast_metrics["max_func_len"],
+                        "nesting_depth": ast_metrics["nesting_depth"],
+                        "num_loops": ast_metrics["num_loops"],
+                        "file_size": file_size,
+                        "warnings": warnings,
+                        "score": 75.0,
+                        "parse_error": True,
+                    }
+                )
+                continue
+
+            ast_metrics = analyze_ast(tree)
+            metrics = {
+                "loc": loc,
+                "num_functions": ast_metrics["num_functions"],
+                "num_classes": ast_metrics["num_classes"],
+                "func_lengths": ast_metrics["func_lengths"],
+                "avg_func_len": ast_metrics["avg_func_len"],
+                "max_func_len": ast_metrics["max_func_len"],
+                "nesting_depth": ast_metrics["nesting_depth"],
+                "num_loops": ast_metrics["num_loops"],
+                "file_size": file_size,
+            }
+            warnings = detect_warnings(metrics, thresholds=runtime_thresholds)
+            score = calculate_complexity_score(metrics)
+            results.append(
+                {
+                    "filepath": filepath,
+                    **metrics,
+                    "warnings": warnings,
+                    "score": score,
+                    "parse_error": False,
+                }
+            )
+        except Exception as error:
+            print(f"Warning: analysis failed for {filepath}: {error}")
+            results.append(
+                {
+                    "filepath": filepath,
+                    "loc": 0,
+                    "num_functions": 0,
+                    "num_classes": 0,
+                    "func_lengths": [],
+                    "avg_func_len": 0.0,
+                    "max_func_len": 0,
+                    "nesting_depth": 0,
+                    "num_loops": 0,
+                    "file_size": 0,
+                    "warnings": [
+                        {
+                            "id": "W-00",
+                            "message": f"Unhandled analysis error: {error}",
+                            "severity": "HIGH",
+                            "metric": "parse_error",
+                        }
+                    ],
+                    "score": 75.0,
+                    "parse_error": True,
+                }
+            )
+
+    summary = summarize_results(results)
+    _ = summary
 
 
 if __name__ == "__main__":
