@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 from datetime import datetime
+import getpass
 import os
 import sys
 from typing import Any
@@ -363,7 +364,204 @@ def generate_pdf_report(
     results: list[dict[str, Any]], summary: dict[str, Any], output_path: str
 ) -> None:
     """Generate a PDF report using fpdf2."""
-    raise NotImplementedError("Implemented in later phases.")
+    if not output_path.lower().endswith(".pdf"):
+        raise ValueError("Output path must end in .pdf")
+
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    if output_dir and not os.path.isdir(output_dir):
+        raise FileNotFoundError(f"Output directory not found: {output_dir}")
+
+    try:
+        from fpdf import FPDF
+    except ImportError as error:
+        raise ImportError("Install fpdf2: pip install fpdf2") from error
+
+    class ReportPDF(FPDF):
+        def footer(self) -> None:
+            self.set_y(-10)
+            self.set_font("Helvetica", size=8)
+            self.cell(0, 5, f"Page {self.page_no()} of {{nb}}", align="R")
+
+    try:
+        pdf = ReportPDF(orientation="P", unit="mm", format="A4")
+        pdf.alias_nb_pages()
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.set_margins(15, 15, 15)
+        pdf.set_title("Codebase Complexity Analyzer Report")
+        pdf.set_author(getpass.getuser())
+        pdf.set_creator("Codebase Complexity Analyzer")
+
+        # Title page
+        pdf.add_page()
+        pdf.set_font("Helvetica", style="B", size=24)
+        pdf.set_y(60)
+        pdf.cell(0, 12, "Codebase Complexity Analyzer", align="C", ln=True)
+        pdf.set_font("Helvetica", size=14)
+        pdf.cell(0, 8, "Python Codebase Analysis Report", align="C", ln=True)
+        pdf.line(15, 100, 195, 100)
+
+        pdf.set_y(110)
+        pdf.set_font("Helvetica", size=12)
+        pdf.cell(0, 7, f"Analysed by: {getpass.getuser()}", ln=True)
+        pdf.cell(0, 7, f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
+        pdf.cell(0, 7, f"Target: {summary.get('target_folder', '[N/A]')}", ln=True)
+        pdf.set_font("Helvetica", style="B", size=12)
+        pdf.cell(0, 7, f"Files Found: {summary.get('total_files', 0)}", ln=True)
+
+        overall_score = float(summary.get("overall_score", 0.0))
+        if overall_score <= 30:
+            pdf.set_text_color(0, 128, 0)
+        elif overall_score <= 60:
+            pdf.set_text_color(204, 136, 0)
+        else:
+            pdf.set_text_color(204, 0, 0)
+        pdf.ln(6)
+        pdf.set_font("Helvetica", style="B", size=16)
+        pdf.cell(0, 10, f"Overall Complexity Score: {overall_score}/100", align="C", ln=True)
+        pdf.set_text_color(0, 0, 0)
+
+        # Analysis section
+        pdf.add_page()
+        for result in results:
+            if pdf.get_y() > 245:
+                pdf.add_page()
+
+            filename = os.path.basename(str(result.get("filepath", "[N/A]")))
+            pdf.set_fill_color(44, 62, 80)
+            pdf.set_text_color(255, 255, 255)
+            pdf.set_font("Helvetica", style="B", size=11)
+            pdf.cell(0, 8, filename, ln=True, fill=True)
+
+            pdf.set_text_color(0, 0, 0)
+            pdf.set_font("Helvetica", size=10)
+            table_rows = [
+                ("M-01 LOC", result.get("loc", "[N/A]")),
+                ("M-02 Num Functions", result.get("num_functions", "[N/A]")),
+                ("M-03 Num Classes", result.get("num_classes", "[N/A]")),
+                ("M-04 Function Lengths", str(result.get("func_lengths", "[N/A]"))),
+                ("M-05 Avg Function Length", result.get("avg_func_len", "[N/A]")),
+                ("M-06 Max Function Length", result.get("max_func_len", "[N/A]")),
+                ("M-07 Loop Nesting Depth", result.get("nesting_depth", "[N/A]")),
+                ("M-08 Number of Loops", result.get("num_loops", "[N/A]")),
+                ("M-09 File Size (bytes)", result.get("file_size", "[N/A]")),
+            ]
+            for key, value in table_rows:
+                pdf.set_font("Helvetica", size=10)
+                pdf.cell(65, 6, str(key), border=1)
+                pdf.set_font("Helvetica", style="B", size=10)
+                pdf.cell(0, 6, str(value), border=1, ln=True)
+
+            pdf.ln(1)
+            warnings = result.get("warnings", [])
+            if isinstance(warnings, list) and warnings:
+                for warning in warnings:
+                    severity = str(warning.get("severity", "LOW"))
+                    if severity == "HIGH":
+                        pdf.set_text_color(220, 20, 60)
+                    elif severity == "MEDIUM":
+                        pdf.set_text_color(255, 140, 0)
+                    else:
+                        pdf.set_text_color(128, 128, 128)
+                    pdf.set_font("Helvetica", size=9)
+                    prefix = f"[{severity}] "
+                    message = str(warning.get("message", "Warning"))
+                    pdf.multi_cell(0, 5, prefix + message)
+                    pdf.set_text_color(0, 0, 0)
+            else:
+                pdf.set_font("Helvetica", size=9)
+                pdf.cell(0, 5, "No warnings", ln=True)
+            pdf.ln(4)
+
+        # Warnings summary section
+        if pdf.get_y() > 148:
+            pdf.add_page()
+        else:
+            pdf.ln(4)
+        pdf.set_fill_color(44, 62, 80)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", style="B", size=13)
+        pdf.cell(0, 8, "Warning Summary", ln=True, fill=True)
+        pdf.set_text_color(0, 0, 0)
+
+        for result in results:
+            warnings = result.get("warnings", [])
+            if not isinstance(warnings, list) or not warnings:
+                continue
+            if pdf.get_y() > 250:
+                pdf.add_page()
+            pdf.set_font("Helvetica", style="B", size=10)
+            pdf.cell(0, 6, os.path.basename(str(result.get("filepath", "[N/A]"))), ln=True)
+            for warning in warnings:
+                if pdf.get_y() > 250:
+                    pdf.add_page()
+                severity = str(warning.get("severity", "LOW"))
+                if severity == "HIGH":
+                    pdf.set_fill_color(220, 20, 60)
+                elif severity == "MEDIUM":
+                    pdf.set_fill_color(255, 140, 0)
+                else:
+                    pdf.set_fill_color(150, 150, 150)
+                y = pdf.get_y()
+                pdf.rect(15, y + 1.5, 4, 4, style="F")
+                pdf.set_x(21)
+                warning_id = str(warning.get("id", "W-XX"))
+                message = str(warning.get("message", "Warning"))
+                pdf.set_font("Helvetica", size=9)
+                pdf.multi_cell(0, 5, f"{warning_id} [{severity}] {message}")
+
+        # Final summary section
+        pdf.add_page()
+        pdf.set_fill_color(44, 62, 80)
+        pdf.set_text_color(255, 255, 255)
+        pdf.set_font("Helvetica", style="B", size=13)
+        pdf.cell(0, 8, "Summary", ln=True, fill=True)
+        pdf.set_text_color(0, 0, 0)
+
+        summary_rows = [
+            ("Total Files", summary.get("total_files", 0)),
+            ("Parse Errors", summary.get("parse_errors", 0)),
+            ("Total Functions", summary.get("total_functions", 0)),
+            ("Total Classes", summary.get("total_classes", 0)),
+            ("Average LOC", summary.get("avg_loc", 0.0)),
+            ("Average Function Length", summary.get("avg_func_len", 0.0)),
+            ("Overall Complexity Score", f"{summary.get('overall_score', 0.0)}/100"),
+        ]
+        for label, value in summary_rows:
+            pdf.set_font("Helvetica", size=10)
+            pdf.cell(75, 7, str(label), border=1)
+            pdf.set_font("Helvetica", style="B", size=10)
+            pdf.cell(0, 7, str(value), border=1, ln=True)
+
+        pdf.ln(6)
+        pdf.set_font("Helvetica", style="B", size=11)
+        pdf.cell(0, 7, "Per-file Score Distribution", ln=True)
+        chart_x = 15
+        chart_y = pdf.get_y() + 4
+        chart_width = 180
+        chart_height = 50
+        pdf.rect(chart_x, chart_y, chart_width, chart_height)
+        bar_count = max(1, len(results))
+        bar_spacing = chart_width / bar_count
+
+        for idx, result in enumerate(results):
+            score = float(result.get("score", 0.0))
+            bar_height = (score / 100.0) * (chart_height - 4)
+            bar_x = chart_x + (idx * bar_spacing) + 1
+            bar_y = chart_y + chart_height - bar_height - 1
+            bar_w = max(1.5, bar_spacing - 2)
+            if score <= 30:
+                pdf.set_fill_color(0, 128, 0)
+            elif score <= 60:
+                pdf.set_fill_color(204, 136, 0)
+            else:
+                pdf.set_fill_color(204, 0, 0)
+            pdf.rect(bar_x, bar_y, bar_w, bar_height, style="F")
+
+        pdf.output(output_path)
+    except Exception as error:
+        raise RuntimeError(f"PDF generation failed: {error}") from error
+
+    print(f"PDF saved to {output_path}")
 
 
 def main() -> None:
@@ -528,6 +726,7 @@ def main() -> None:
     summary = summarize_results(results)
     summary["target_folder"] = os.path.abspath(args.folder)
     generate_terminal_report(results, summary)
+    generate_pdf_report(results, summary, args.output)
 
 
 if __name__ == "__main__":
